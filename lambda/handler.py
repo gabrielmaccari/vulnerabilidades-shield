@@ -2,9 +2,22 @@ import json
 import os
 import urllib.request
 import logging
+import boto3
+from datetime import datetime
+from decimal import Decimal
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+def get_next_job_id(table):
+    """Gera o próximo ID de forma atômica usando contador no DynamoDB"""
+    response = table.update_item(
+        Key={'job_id': 'COUNTER', 'created_at': 'COUNTER'},
+        UpdateExpression='ADD next_id :inc',
+        ExpressionAttributeValues={':inc': 1},
+        ReturnValues='UPDATED_NEW'
+    )
+    return int(response['Attributes']['next_id'])
 
 def lambda_handler(event, context):
     try:
@@ -41,6 +54,23 @@ def lambda_handler(event, context):
                 result = json.loads(body)
 
                 logger.info(f"Request completed with status {status}")
+
+                # Salvar no DynamoDB com auto-incremento
+                dynamodb = boto3.resource('dynamodb')
+                table = dynamodb.Table(os.environ['DYNAMODB_TABLE'])
+
+                # Gerar próximo ID automaticamente
+                next_id = get_next_job_id(table)
+
+                # Salvar o job
+                table.put_item(Item={
+                    'job_id': str(next_id),
+                    'created_at': datetime.utcnow().isoformat(),
+                    'result': result
+                })
+
+                logger.info(f"Job {next_id} saved to DynamoDB")
+
                 return {
                     "statusCode": status,
                     "body": json.dumps(result)
